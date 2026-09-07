@@ -1,23 +1,26 @@
-"""Code for the multi-agent gridworld lab."""
+"""Public imports for the cooperative gridworld."""
 
-from .agents import CoordinatedAgentTemplate, ExampleBaselineAgent
-from .environment import GridWorld
-from .models import (
+from simulator import (
     Action,
+    Agent,
+    BaselineAgent,
+    CoordinatedAgent,
     Direction,
+    GridWorld,
     Interaction,
     Message,
     MessageKind,
     Percept,
     Position,
+    run_episode,
 )
-from .runner import run_episode
 
 __all__ = [
     "Action",
-    "CoordinatedAgentTemplate",
+    "Agent",
+    "BaselineAgent",
+    "CoordinatedAgent",
     "Direction",
-    "ExampleBaselineAgent",
     "GridWorld",
     "Interaction",
     "Message",

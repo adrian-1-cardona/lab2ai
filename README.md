@@ -2,69 +2,114 @@
 
 ## Cooperative Multi-Agent Gridworld
 
-This project implements a small environment in which two robots collect
-packages and return them to a common base. The design follows the Russell and
-Norvig agent model: each agent receives a local percept, retains any internal
-state it chooses, and returns one action at each time step.
+This project compares two ways for agents to collect packages in the same 8 x
+8 world. The baseline agents work independently. The coordinated agents share
+package discoveries, claim targets, and release those claims when the work is
+done.
 
-The included `ExampleBaselineAgent` is an intentionally weak, independent
-agent. It has local memory and a simple exploration rule, but it does **not**
-communicate, claim packages, or coordinate traffic. It is a comparison point,
-not a solution to the lab. `CoordinatedAgentTemplate` is a runnable shell with
-the coordination work left as TODOs for students.
+Everything needed to run the lab is in `simulator.py`. It only uses the Python
+standard library.
 
 ### Run it
 
-The project uses only the Python standard library and Python 3.10 or later.
+Use Python 3.10 or newer.
 
 ```bash
-python run_demo.py
-python -m unittest discover -s tests -v
+python simulator.py --run-tests
+python simulator.py --run-coordinated --seed 42
+python simulator.py --run-baseline --seed 42
+python simulator.py --run-experiments
 ```
 
-### What is included
+Single-policy runs print the full step log. Add `--summary-only` when only the
+final numbers are needed.
 
-| Path | Purpose |
+### PEAS description
+
+| Part | This simulation |
 | --- | --- |
-| `gridworld/environment.py` | Environment mechanics, scoring, local perception, simultaneous moves, messages, and event logs. |
-| `gridworld/models.py` | The `Percept`, `Action`, `Message`, and result data structures. |
-| `gridworld/agents.py` | The independent baseline example and the incomplete coordinated-agent template. |
-| `gridworld/runner.py` | A loop that asks each agent for its own action, then advances the world. |
-| `gridworld/scenarios.py` | One 8 x 8 starter map with four packages, obstacles, and a bottleneck. |
-| `tests/test_environment.py` | Mechanics checks students can run while extending their policy. |
+| Performance | Deliver packages, avoid invalid actions and collisions, and finish within 60 steps. |
+| Environment | An 8 x 8 grid with one base, five obstacles, four packages, and two agents. |
+| Actuators | Move north, south, east, or west; wait; pick up; drop; and send one message. |
+| Sensors | A local 3 x 3 view, the clock, the carried package ID, the last action status, and the previous turn's messages. |
 
-### Environment contract
+### Agent and environment boundary
 
-- Coordinates are `(row, column)`; row 0 is north and column 0 is west.
-- Each agent sees only in-bounds cells in a local 3 x 3 window, its carrying
-  state, its last action result, the current time, and incoming messages.
-- An `Action` can request a move, a pickup/drop interaction, and one optional
-  broadcast message in the same time step.
-- Moves resolve simultaneously. Same-destination moves, swaps, and moves into
-  an agent that stays in place are blocked and logged as collision attempts.
-- A message sent at time `t` is available when the recipient next chooses an
-  action at time `t + 1`.
-- The team score is `+10` per delivered package, `-1` per attempted move, `-2`
-  per invalid move or interaction, `-3` per collision attempt, and `-5` per
-  unfinished package at the end of the episode.
+The environment owns the full map, package state, score, mailboxes, and agent
+locations. An agent never receives the environment object. Its `act()` method
+only receives an immutable `Percept` with a 3 x 3 local view. Each agent builds
+its own map from those views and keeps its estimated position in local memory.
 
-`run_demo.py` prints a short event log. The full log is available as
-`EpisodeResult.events`; each event records the time, agent, percept summary,
-received and sent messages, action, result, and final position.
+The environment asks both agents for an action before changing the world. It
+then resolves both moves together. A same-square attempt or a swap blocks both
+agents. Pickup, drop, and delivery updates happen once in the shared state.
 
-### Student starting point
+### Messages and claims
 
-1. Run the supplied independent baseline and record its deliveries, score,
-   collision attempts, and steps.
-2. Implement the TODOs in `CoordinatedAgentTemplate` (or create an agent class
-   with the same `reset()` and `act()` methods).
-3. Define local rules for `DISCOVER`, `CLAIM`, and `RELEASE` messages. Keep
-   package knowledge and claims in each agent's own state; do not read the
-   whole environment from the agent.
-4. Compare the policy against the baseline on the starter map and on any
-   additional fixed maps or seeds required by the lab.
-5. Extend the tests for any new behavior that needs a contract check.
+The coordinated policy uses three message types:
 
-The environment intentionally does not enforce a particular claim policy.
-Deciding how claims are made, respected, released, or repaired after a failed
-attempt is the core multi-agent design problem for the lab.
+- `DISCOVER(package_id, location)` shares a package location.
+- `CLAIM(package_id, agent_id, distance)` says which agent is taking it.
+- `RELEASE(package_id)` clears the claim after delivery or after losing a tie.
+
+Messages sent on step `t` are staged until both agents finish acting. They are
+only visible in the recipient's percept on step `t + 1`.
+
+If both agents claim the same package, the shorter Manhattan distance wins. If
+the distances match, the lower agent number wins, so `Agent_1` wins a tie over
+`Agent_2`. Both agents run that rule using their own local state.
+
+The baseline policy does not read messages, send messages, or track claims. It
+uses the same local navigation code so the comparison stays focused on the
+coordination behavior.
+
+### Maps and scoring
+
+Seeds 42, 101, and 2023 select three fixed maps. Each map has exactly five
+obstacles and four packages. The obstacle groups leave a one-cell channel in
+the middle of the map, which gives both agents a bottleneck to handle.
+
+The team starts at zero and uses these rules:
+
+- `+10` for each delivery
+- `-1` for each attempted move
+- `-2` for an invalid move or interaction
+- `-3` for each collision event
+- `-5` for every package still unfinished at the end
+
+The current fixed run is reproducible:
+
+| Map Seed | Policy | Deliveries | Team Score | Collision Attempts | Steps |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 42 | Baseline | 3 | -102 | 3 | 60 |
+| 42 | Coordinated | 4 | -67 | 0 | 54 |
+| 101 | Baseline | 3 | -102 | 3 | 60 |
+| 101 | Coordinated | 4 | -61 | 0 | 52 |
+| 2023 | Baseline | 3 | -120 | 9 | 60 |
+| 2023 | Coordinated | 4 | -49 | 0 | 46 |
+
+The score stays negative because movement costs are larger than the delivery
+reward on an 8 x 8 map. The useful comparison is that coordination completes
+all four deliveries sooner and avoids repeated conflicts.
+
+### What the tests cover
+
+`python simulator.py --run-tests` checks the local percept boundary,
+same-square collisions, swap collisions, one-time pickup and delivery,
+next-turn message delivery, baseline silence, all three coordination messages,
+the tie-break rule, the fixed map shape, and full coordinated runs on all three
+maps.
+
+### Pull request and commit wording
+
+If the work needs to be split into separate pull requests, these titles keep
+the history simple and match the wording used in this project:
+
+| Pull request | Commit wording |
+| --- | --- |
+| Build the simulator and world rules | Add the local percept and shared world state; Resolve movement, collisions, and package updates; Delay messages until the next turn |
+| Add the independent baseline | Add local exploration and package memory; Bring carried packages back to the base |
+| Add coordination and package claims | Share package discoveries; Track claims in each agent; Settle matching claims with the distance and agent ID rule |
+| Add the fixed maps, logs, and tests | Add the three repeatable maps; Print readable step logs and result tables; Cover the world rules and both policies |
+
+These are plain descriptions on purpose, without category prefixes.
