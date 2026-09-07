@@ -1,83 +1,146 @@
-# CSC 4800: Adrian Cardona
+# Cooperative Multi-Agent Gridworld
 
-## Cooperative Multi-Agent Gridworld
+**CSC 4800 — Adrian Cardona**
 
-This project compares two ways for agents to collect packages in the same 8 x
-8 world. The baseline agents work independently. The coordinated agents share
-package discoveries, claim targets, and release those claims when the work is
-done.
+This project compares two ways for agents to work together while collecting
+packages in an 8 x 8 gridworld:
 
-Everything needed to run the lab is in `simulator.py`. It only uses the Python
-standard library.
+- **Baseline agents** work independently and do not communicate.
+- **Coordinated agents** share package locations, claim targets, release
+  completed targets, and yield to avoid local conflicts.
 
-### Run it
+Both policies run on the same fixed scenarios, follow the same scoring rules,
+and only see a local 3 x 3 area around themselves. This keeps the comparison
+focused on what communication and coordination add to the agents' behavior.
 
-Use Python 3.10 or newer.
+## Requirements
+
+- Python 3.10 or newer
+- No third-party packages
+
+Run all commands from the project root. On macOS and Linux, check the active
+Python version with:
 
 ```bash
-python simulator.py --run-tests
-python simulator.py --run-coordinated --seed 42
-python simulator.py --run-baseline --seed 42
-python simulator.py --run-experiments
+python3 --version
 ```
 
-Single-policy runs print the full step log. Add `--summary-only` when only the
-final numbers are needed.
+If `python` already points to Python 3.10 or newer on your system, you can use
+it instead of `python3` in the commands below.
+
+## Quick start
+
+Run the tests first:
+
+```bash
+python3 simulator.py --run-tests
+```
+
+Then run either policy on the default scenario, seed 42:
+
+```bash
+python3 simulator.py --run-baseline
+python3 simulator.py --run-coordinated
+```
+
+A single-policy run prints every action followed by a final summary. Add
+`--summary-only` to hide the step-by-step trace:
+
+```bash
+python3 simulator.py --run-coordinated --seed 101 --summary-only
+```
+
+To compare both policies across all three scenarios, run:
+
+```bash
+python3 simulator.py --run-experiments
+```
+
+## Command reference
+
+| Command | What it does |
+| --- | --- |
+| `python3 simulator.py --run-baseline` | Runs the independent policy. |
+| `python3 simulator.py --run-coordinated` | Runs the communicating policy. |
+| `python3 simulator.py --run-experiments` | Runs both policies on all fixed scenarios and prints a comparison table. |
+| `python3 simulator.py --run-tests` | Runs the built-in test suite. |
+| `python3 run_demo.py` | Runs a full baseline trace on seed 42. |
+| `python3 simulator.py --help` | Shows every command-line option. |
+
+Exactly one `--run-*` mode is required. For a baseline or coordinated run,
+`--seed` can be `42`, `101`, or `2023` and defaults to `42`. These numbers
+select hard-coded scenarios; they do not generate random maps.
+
+## Project structure
+
+```text
+.
+├── simulator.py
+├── run_demo.py
+├── gridworld/
+│   ├── agents.py
+│   ├── environment.py
+│   ├── models.py
+│   ├── runner.py
+│   └── scenarios.py
+└── tests/
+    └── test_environment.py
+```
+
+`simulator.py` is the main implementation. It contains the environment, data
+models, agent policies, fixed scenarios, runner, command-line interface, and
+tests. `run_demo.py` is a small shortcut for the baseline demo.
+
+The files in `gridworld/` provide import-friendly names that point back to the
+implementation in `simulator.py`. `tests/test_environment.py` exposes the
+built-in test class to standard `unittest` discovery.
+
+## How the simulation works
+
+Each turn follows the same order:
+
+1. The environment gives each agent an immutable local percept.
+2. Both agents choose an action before the world changes.
+3. The environment resolves movement and collisions together.
+4. Valid pickup and drop interactions are applied.
+5. Messages are staged for the next turn.
+
+The environment owns the full map, score, package state, mailboxes, and true
+agent positions. Agents never receive the environment object or their absolute
+position. They estimate where they are and build their own maps from local
+observations.
 
 ### PEAS description
 
 | Part | This simulation |
 | --- | --- |
-| Performance | Deliver packages, avoid invalid actions and collisions, and finish within 60 steps. |
+| Performance | Deliver packages, limit movement costs, avoid invalid actions and collisions, and finish within 60 turns. |
 | Environment | An 8 x 8 grid with one base, five obstacles, four packages, and two agents. |
 | Actuators | Move north, south, east, or west; wait; pick up; drop; and send one message. |
-| Sensors | A local 3 x 3 view, the clock, the carried package ID, the last action status, and the previous turn's messages. |
+| Sensors | A local 3 x 3 view, the clock, the carried package ID, the previous action status, and messages from the previous turn. |
 
-### Agent and environment boundary
+## Policy comparison
 
-The environment owns the full map, package state, score, mailboxes, and agent
-locations. An agent never receives the environment object. Its `act()` method
-only receives an immutable `Percept` with a 3 x 3 local view. Each agent builds
-its own map from those views and keeps its estimated position in local memory.
+The baseline policy keeps a local terrain and package map, plans routes through
+known and unexplored cells, and brings any carried package back to the base. It
+does not read or send messages.
 
-The environment asks both agents for an action before changing the world. It
-then resolves both moves together. A same-square attempt or a swap blocks both
-agents. Pickup, drop, and delivery updates happen once in the shared state.
+The coordinated policy uses the same local mapping and route planning, then
+adds package messages, deterministic claim handling, and local movement
+yielding. It uses three message types:
 
-### Messages and claims
+- `DISCOVER` shares a package ID and location.
+- `CLAIM` tells the other agent which package it plans to collect.
+- `RELEASE` clears a claim when the package is delivered or abandoned.
 
-The coordinated policy uses three message types:
+Messages sent during turn `t` become visible during turn `t + 1`. If both
+agents claim the same package, the shorter recorded Manhattan distance wins.
+If the distances match, `Agent_1` wins the tie.
 
-- `DISCOVER(package_id, location)` shares a package location.
-- `CLAIM(package_id, agent_id, distance)` says which agent is taking it.
-- `RELEASE(package_id)` clears the claim after delivery or after losing a tie.
+## Reproducible comparison
 
-Messages sent on step `t` are staged until both agents finish acting. They are
-only visible in the recipient's percept on step `t + 1`.
-
-If both agents claim the same package, the shorter Manhattan distance wins. If
-the distances match, the lower agent number wins, so `Agent_1` wins a tie over
-`Agent_2`. Both agents run that rule using their own local state.
-
-The baseline policy does not read messages, send messages, or track claims. It
-uses the same local navigation code so the comparison stays focused on the
-coordination behavior.
-
-### Maps and scoring
-
-Seeds 42, 101, and 2023 select three fixed maps. Each map has exactly five
-obstacles and four packages. The obstacle groups leave a one-cell channel in
-the middle of the map, which gives both agents a bottleneck to handle.
-
-The team starts at zero and uses these rules:
-
-- `+10` for each delivery
-- `-1` for each attempted move
-- `-2` for an invalid move or interaction
-- `-3` for each collision event
-- `-5` for every package still unfinished at the end
-
-The current fixed run is reproducible:
+The current implementation produces this table with
+`python3 simulator.py --run-experiments`:
 
 | Map Seed | Policy | Deliveries | Team Score | Collision Attempts | Steps |
 | ---: | --- | ---: | ---: | ---: | ---: |
@@ -88,28 +151,27 @@ The current fixed run is reproducible:
 | 2023 | Baseline | 3 | -120 | 9 | 60 |
 | 2023 | Coordinated | 4 | -49 | 0 | 46 |
 
-The score stays negative because movement costs are larger than the delivery
-reward on an 8 x 8 map. The useful comparison is that coordination completes
-all four deliveries sooner and avoids repeated conflicts.
+For these fixed scenarios, coordination delivers every package before the
+60-turn limit and avoids the repeated conflicts seen in the baseline runs.
+The score is still useful alongside deliveries and steps because every move,
+invalid action, collision, and unfinished package changes the final total.
 
-### What the tests cover
+## Tests
 
-`python simulator.py --run-tests` checks the local percept boundary,
-same-square collisions, swap collisions, one-time pickup and delivery,
-next-turn message delivery, baseline silence, all three coordination messages,
-the tie-break rule, the fixed map shape, and full coordinated runs on all three
-maps.
+The project includes 13 `unittest` cases covering local perception, movement
+penalties, same-cell and swap collisions, pickup and delivery, legal package
+drops, blocked interactions, next-turn messages, baseline silence, all three
+coordination messages, claim tie-breaking, fixed scenario shape, and complete
+coordinated runs.
 
-### Pull request and commit wording
+Run them through the simulator:
 
-If the work needs to be split into separate pull requests, these titles keep
-the history simple and match the wording used in this project:
+```bash
+python3 simulator.py --run-tests
+```
 
-| Pull request | Commit wording |
-| --- | --- |
-| Build the simulator and world rules | Add the local percept and shared world state; Resolve movement, collisions, and package updates; Delay messages until the next turn |
-| Add the independent baseline | Add local exploration and package memory; Bring carried packages back to the base |
-| Add coordination and package claims | Share package discoveries; Track claims in each agent; Settle matching claims with the distance and agent ID rule |
-| Add the fixed maps, logs, and tests | Add the three repeatable maps; Print readable step logs and result tables; Cover the world rules and both policies |
+They can also be discovered through the standard library test runner:
 
-These are plain descriptions on purpose, without category prefixes.
+```bash
+python3 -m unittest discover -s tests -v
+```
